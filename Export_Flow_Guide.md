@@ -2,161 +2,119 @@
 
 Template: `SIM_Inventory_Export_TEMPLATE.xlsx` (în acest folder).
 
+> **Versiunea 2 (2026-11-26).** Țara se ia din **numele fișierului**. Flow-ul nu mai scrie nimic
+> în Excel: fără conector Excel, fără pauză, fără fișier temporar. Prima versiune scria țara cu
+> „Update a row”, dar fișierul era citit pentru atașament înainte ca modificarea să fie salvată,
+> așa că atașamentul ajungea fără țară și tabelul rămânea gol.
+
 ## Cum funcționează
 
 ```
 Power Apps: dropdown țară + buton Export
    │  ExportInventory.Run(țara)
    ▼
-Power Automate (doar acțiuni standard, niciun Office Script)
-   1. ia template-ul și creează o copie temporară cu nume nou
-   2. scrie țara în tblParams (Excel "Update a row", 1 apel)
-   3. citește fișierul și îl trimite pe mail ca atașament
-   4. șterge copia temporară, răspunde aplicației
+Power Automate (4 acțiuni standard)
+   1. compune numele: SIM_Inventory_<Țara>_<data>_<ora>.xlsx
+   2. citește template-ul
+   3. îl trimite pe mail ca atașament, cu numele de la pasul 1
+   4. răspunde aplicației
    ▼
 Utilizatorul deschide atașamentul în Excel desktop
-   → Power Query descarcă din listă DOAR țara respectivă, cu contul lui
+   → celula Export!B7 scoate țara din numele fișierului
+   → Power Query descarcă din listă DOAR țara respectivă, cu contul utilizatorului
    → Table_query se umple; validările, formulele și culorile merg ca în template-ul de import
 ```
 
-**Fișierul trimis pe mail nu conține date**, doar țara. Datele vin la deschidere, cu drepturile
-utilizatorului. Atașamentul are ~55 KB indiferent de mărimea țării, iar flow-ul are mereu
-aceleași 7 acțiuni, fie că țara are 50 de rânduri, fie 20.000.
+Fișierul trimis pe mail nu conține date. Datele vin la deschidere, cu drepturile utilizatorului.
+Atașamentul are ~55 KB indiferent de mărimea țării.
+
+**Numele fișierului nu se schimbă înainte de prima deschidere.** Excel poate adăuga singur
+` (1)` la salvare, iar asta nu strică nimic. Dacă fișierul a fost redenumit, Excel afișează mesajul
+*No country to download…*: scrii țara în **Export!B4** și dai Data → Refresh All.
 
 ---
 
 ## Pasul 0: o singură dată, în SharePoint
 
-1. Pe site-ul `simri`, în **Documents**, creează două foldere: `ExportTemplate` și `ExportTemp`.
-2. Încarcă `SIM_Inventory_Export_TEMPLATE.xlsx` în `ExportTemplate`.
-   Utilizatorii nu au nevoie de acces la aceste foldere, flow-ul lucrează cu conexiunea lui.
-3. Verifică faptul că `SIM_Country` e coloană indexată în listă (List settings → Indexed columns).
-   Importul o cere deja, așa că ar trebui să fie.
+1. Pe site-ul `simri`, în **Documents**, creează folderul `ExportTemplate` și încarcă acolo
+   `SIM_Inventory_Export_TEMPLATE.xlsx`. Dacă îl încărcasesei deja, înlocuiește-l cu versiunea
+   nouă.
+2. Verifică faptul că `SIM_Country` e coloană indexată în listă (List settings → Indexed columns).
 
-> Dacă biblioteca sau folderele au alt nume, ajustează doar căile de la pașii 3, 4 și 8.
+## Pasul 1: Flow
 
----
+Folosește flow-ul existent `SIM Inventory - Export`, sau creează unul nou: **Instant cloud flow**
+→ trigger **When Power Apps calls a flow (V2)**.
 
-## Pasul 1: Flow nou
-
-Power Automate → **Create** → **Instant cloud flow** → nume `SIM Inventory - Export`
-→ trigger **When Power Apps calls a flow (V2)** → Create.
+**Dacă ai construit deja flow-ul după prima versiune a ghidului:** șterge acțiunile
+`Create export file`, `Update a row`, `Delay`, `Get export file` și `Delete file`. Apoi, în mail,
+pune la Attachments Content conținutul din `Get template` (pasul 4).
 
 ## Pasul 2: Trigger
 
-În trigger: **+ Add an input** → **Text** → numele `Country`.
+Input **Text** cu numele `Country`.
 
-În restul ghidului:
-- țara este `triggerBody()?['text']`;
-- mailul celui care a apăsat butonul este `triggerOutputs()?['headers']?['x-ms-user-email']`.
-
-> Dacă mai adaugi un input înaintea lui Country, cheia devine `text_1` etc. Verifică în
-> Peek code al trigger-ului.
+- Țara este `triggerBody()?['text']`.
+- Mailul celui care a apăsat butonul este `triggerOutputs()?['headers']?['x-ms-user-email']`.
 
 ## Pasul 3: Compose `File name`
 
-**+ New step** → **Compose**, redenumește-l `File name`. Inputs (expression):
+Inputs (expression):
 
 ```
 concat('SIM_Inventory_', replace(trim(triggerBody()?['text']), ' ', '_'), '_', formatDateTime(convertFromUtc(utcNow(), 'GTB Standard Time'), 'yyyy-MM-dd_HHmmss'), '.xlsx')
 ```
 
-Rezultat: `SIM_Inventory_Taiwan_2026-11-26_143015.xlsx`. Secundele din nume evită coliziunile
-când doi oameni exportă aceeași țară în același timp.
+Rezultatul e `SIM_Inventory_Bosnia_and_Herzegovina_2026-11-26_143015.xlsx`. Template-ul transformă
+la loc `_` în spațiu și ignoră ultimele două segmente, data și ora.
 
-## Pasul 4: SharePoint `Get file content` (template)
+> Formatul trebuie păstrat exact: prefixul `SIM_Inventory_`, spațiile din țară înlocuite cu `_`, apoi
+> `_data_ora`. Formula din template se bazează pe el.
 
-- Site Address: site-ul `simri`
-- File Identifier: răsfoiește la `/Shared Documents/ExportTemplate/SIM_Inventory_Export_TEMPLATE.xlsx`
+## Pasul 4: SharePoint `Get file content`
+
+- Site Address: `simri`
+- File Identifier: `/Shared Documents/ExportTemplate/SIM_Inventory_Export_TEMPLATE.xlsx`
 
 Redenumește acțiunea `Get template`.
 
-## Pasul 5: SharePoint `Create file`
-
-- Site Address: `simri`
-- Folder Path: `/Shared Documents/ExportTemp`
-- File Name: `outputs('File_name')`
-- File Content: **File Content** din `Get template`
-
-Redenumește acțiunea `Create export file`.
-
-## Pasul 6: Excel Online (Business) `Update a row`
-
-Asta e singura atingere a fișierului Excel. E un conector standard, nu Office Script.
-
-| Câmp | Valoare |
-|---|---|
-| Location | site-ul `simri` |
-| Document Library | Documents |
-| File | *Enter custom value* → expression `outputs('Create_export_file')?['body/Id']` |
-| Table | *Enter custom value* → `tblParams` |
-| Key Column | `Key` |
-| Key Value | `Country` |
-| Row (Item) | `{"Value": "@{triggerBody()?['text']}"}` |
-
-Pentru că fișierul e dinamic, Power Automate nu cunoaște coloanele și îți dă un singur câmp
-pentru tot rândul. Lipește acolo JSON-ul de mai sus.
-
-**Settings → Retry policy:** Exponential, Count 4, Interval `PT10S`. Un fișier abia creat poate
-da o dată „file not found” sau „locked”, iar retry-ul rezolvă asta.
-
-## Pasul 7: `Delay` 20 de secunde
-
-Conectorul Excel salvează modificarea în fișier cu o mică întârziere. Fără pauză, pasul următor
-poate citi fișierul fără țară, iar utilizatorul primește un tabel gol.
-
-## Pasul 8: SharePoint `Get file content` (exportul)
-
-- File Identifier: `outputs('Create_export_file')?['body/Id']`
-
-Redenumește acțiunea `Get export file`.
-
-## Pasul 9: Office 365 Outlook `Send an email (V2)`
+## Pasul 5: Office 365 Outlook `Send an email (V2)`
 
 | Câmp | Valoare |
 |---|---|
 | To | `triggerOutputs()?['headers']?['x-ms-user-email']` |
 | Subject | `SIM inventory export – @{triggerBody()?['text']}` |
 | Attachments Name | `outputs('File_name')` |
-| Attachments Content | **File Content** din `Get export file` |
+| Attachments Content | **File Content** din `Get template` |
 
-Body, de exemplu:
+Body:
 
 ```
 Hi,
 
 Your inventory export for <b>@{triggerBody()?['text']}</b> is attached.
 
-1. Save the attachment, then open it in the Excel desktop app (not in the browser).
-2. The data is downloaded from SharePoint when the file opens. The first time Excel may ask you
-   to sign in: choose "Organizational account", Sign in, Connect. If you see a yellow
-   "Enable Content" bar, click it.
+1. Save the attachment WITHOUT renaming it, then open it in the Excel desktop app (not in the browser).
+2. The data is downloaded from SharePoint when the file opens (a few seconds). The first time,
+   Excel may ask you to sign in: choose "Organizational account", Sign in, Connect.
+   If you see a yellow "Enable Content" or "Enable Editing" bar, click it, then Data > Refresh All.
 3. Edit, save, and upload the file through the app as usual.
 ```
 
-> Mailul pleacă din căsuța celui care deține conexiunea Outlook a flow-ului. Dacă vreți să plece
-> din căsuța de suport, folosește **Send an email from a shared mailbox (V2)** cu aceleași câmpuri.
+> Mailul pleacă din căsuța celui care deține conexiunea Outlook a flow-ului. Pentru o căsuță
+> comună, folosește **Send an email from a shared mailbox (V2)**.
 
-## Pasul 10: SharePoint `Delete file`
+## Pasul 6: `Respond to a PowerApp or flow`
 
-- File Identifier: `outputs('Create_export_file')?['body/Id']`
-
-Ca să nu rămână fișiere în `ExportTemp` când mailul eșuează: **Configure run after** → bifează
-*is successful*, *has failed*, *is skipped* și *has timed out*.
-
-## Pasul 11: `Respond to a PowerApp or flow`
-
-Adaugă output **Text** `message` cu valoarea:
+Output **Text** `message`:
 
 ```
 Export for @{triggerBody()?['text']} sent to @{triggerOutputs()?['headers']?['x-ms-user-email']}
 ```
 
-## Pasul 12: Power Apps
+## Pasul 7: Power Apps
 
-1. **Power Automate** (panoul din stânga) → **Add flow** → `SIM Inventory - Export`.
-2. Dropdown-ul de țară, de exemplu `ddExportCountry`, rămâne cel pe care îl ai deja.
-3. Butonul **Export**, la **OnSelect**:
+Butonul **Export**, la **OnSelect**:
 
 ```
 If(
@@ -169,71 +127,78 @@ If(
 )
 ```
 
-- Pe buton: `DisplayMode = If(varExporting, DisplayMode.Disabled, DisplayMode.Edit)`, ca să nu
-  fie apăsat de două ori.
-- Numele flow-ului în formulă e cel afișat de Power Apps după Add flow. Fără spații, de obicei
-  `'SIMInventory-Export'`.
-- Dacă dropdown-ul e un Choice din SharePoint, `.Selected.Value` e corect. Dacă e o listă de
-  texte simple, folosește `.Selected.Value` sau `.Selected.Result`, după cum o ai.
+- Pe buton: `DisplayMode = If(varExporting, DisplayMode.Disabled, DisplayMode.Edit)`.
+- `'SIMInventory-Export'` e numele afișat de Power Apps după **Add flow**.
+- `.Selected.Value` sau `.Selected.Result`, după tipul dropdown-ului.
 
 ---
 
 ## Primul test
 
-1. Exportă o țară mică din app.
-2. În mail, deschide atașamentul în **Excel desktop**.
-3. Pe foaia **Export**, celula **B4** trebuie să conțină țara. Dacă e goală, mărește pauza de la
-   pasul 7.
-4. Prima dată Excel îți cere logarea la SharePoint: Organizational account → Sign in → Connect.
-5. Foaia **query** se umple cu rândurile țării, iar culorile apar ca în template-ul de import.
-6. Compară numărul de rânduri cu lista filtrată în SharePoint.
-7. Fă o modificare, salvează, închide și redeschide fișierul. Modificarea trebuie să fie încă
-   acolo: refresh-ul nu suprascrie datele existente.
-8. Încarcă fișierul prin flow-ul de import, ca de obicei.
+1. Exportă o țară mică din app și salvează atașamentul fără să-l redenumești.
+2. Deschide-l în **Excel desktop**. Dacă apare bara **Protected View → Enable Editing**, apasă-o.
+3. Foaia **Export**, celula **B7**, trebuie să arate țara.
+4. Logarea la SharePoint, doar prima dată: Organizational account → Sign in → Connect.
+5. Foaia **query** se umple. Dacă nu se întâmplă nimic după câteva secunde, dă **Data → Refresh All**.
+6. Dacă apare un mesaj de eroare, el spune ce lipsește:
+   - **No country**: numele fișierului a fost schimbat. Scrie țara în B4, apoi Refresh All.
+   - **No items**: SharePoint n-a găsit niciun rând cu `SIM_Country` exact ca țara din app.
+     Valoarea din dropdown și cea din listă diferă, sau nu ai drept de citire pe listă.
+   - O eroare cu **Access / 401 / 403**: logarea nu e făcută. Data → Get Data →
+     Data Source Settings → șterge sursa simri → Refresh All și loghează-te cu Organizational account.
+7. Compară numărul de rânduri cu lista filtrată în SharePoint.
+8. Modifică ceva, salvează, închide și redeschide fișierul. Modificarea trebuie să fie încă acolo.
 
 ---
 
 ## Ce face template-ul (pentru întreținere)
 
-- **Foaia Export → `tblParams`:** `Country` (scris de flow), `SiteUrl`, `ListGuid`.
+- **Foaia Export → `tblParams`:**
+
+  | Key | Ce conține |
+  |---|---|
+  | `Country` | B4, gol. Se completează doar manual și are prioritate. |
+  | `SiteUrl` | Site-ul listei. |
+  | `ListGuid` | ID-ul listei. |
+  | `CountryFromFileName` | B7, o formulă cu `CELL("filename")` care scoate țara din numele fișierului. |
+
 - **Interogarea `qInventory`**, în Data → Queries & Connections:
-  - citește `tblParams`;
   - cere `/_api/web/lists(guid'…')/items` cu `$select` pe cele 20 de coloane,
-    `$filter=SIM_Country eq '<țara>'` (apostroful e dublat) și `$top=5000`;
+    `$filter=SIM_Country eq '<țara>'` și `$top=5000`;
   - urmează `odata.nextLink` până la ultima pagină;
   - sortează după ID;
-  - păstrează identificatorii ca text.
-  - Dacă `StartDate` vine din SharePoint ca dată ISO, o transformă în `dd-mm-yyyy`.
-- **Funcția `fnFetchPage`:** un singur apel `Web.Contents` care citește o pagină JSON.
+  - păstrează identificatorii ca text;
+  - transformă o dată ISO în `dd-mm-yyyy`.
+- **Refresh-ul la deschidere rulează în fundal.** Așa pornește după ce Excel a calculat B7. În
+  primul plan pornea înainte și nu găsea țara.
 - **Regula de siguranță:** dacă `Table_query` are deja date, refresh-ul le întoarce neschimbate.
-  - De aceea „refresh la deschidere” umple fișierul o singură dată și apoi nu mai atinge editările.
-  - Pentru o descărcare nouă: șterge toate rândurile tabelului, apoi **Data → Refresh All**.
-- **Maparea coloanelor** Excel → SharePoint e lista `ColumnMap` din `qInventory`, aceeași ca în
-  `payload_and_fieldmap.md`: `Legal entity` → `Legalentity`, `SIM Type` → `SIMType`.
-  - Dacă adăugați o coloană în listă și în template, adaug-o și acolo, la poziția ei.
+  - Fișierul se umple deci o singură dată; editările nu sunt suprascrise niciodată.
+  - Pentru o descărcare nouă: șterge toate rândurile tabelului, apoi Data → Refresh All.
+- **Erori explicite** în loc de tabel gol: *No country*, *No items*, *Missing setting*.
+- **`ColumnMap`** din `qInventory` = maparea Excel → SharePoint, aceeași ca în
+  `payload_and_fieldmap.md`.
 - **Coloanele U–AB, validările și cele 50 de reguli de culoare** sunt identice cu
-  `SIM_Data_Validation_DEMO_NEW.xlsx`. Am comparat regulă cu regulă după construcție.
+  `SIM_Data_Validation_DEMO.xlsx`. Am comparat regulă cu regulă după construcție.
 
 ### Testat local (Excel desktop, cu o sursă simulată în locul SharePoint)
 
 - două pagini cu `nextLink`, ID-uri nesortate, câmpuri goale, boolean, dată ISO;
-- valori de 19–21 de cifre: păstrate integral, ca text;
-- coloanele de verificare, culorile și `RowErrors` pe toate rândurile încărcate;
+- ICC_ID de 19–21 de cifre: păstrate integral;
 - editări + refresh: editările rămân;
 - rând lipit sub tabel + refresh: rândul rămâne și primește formulele;
 - toate rândurile șterse + refresh: se descarcă din nou;
-- țară cu apostrof (`Cote d'Ivoire`): filtrul e corect;
-- fișierul deschis prin dublu-click: se umple singur la deschidere.
+- țara din numele fișierului, inclusiv `Cote_d'Ivoire` cu ` (1)` la final;
+- fișier redenumit: mesajul *No country*;
+- deschis prin dublu-click: se umple singur, din numele fișierului.
 
 ### Netestat (nu am acces la listă)
 
 - apelul real către SharePoint și logarea;
-- tipul real al coloanelor `Status`, `IsVR`, `StartDate`. Dacă vreuna e **Lookup** sau
-  **Person**, vine ca ID sau obiect, nu ca text, și trebuie ajustată maparea.
+- tipul real al coloanelor `Status`, `IsVR`, `StartDate`. Dacă vreuna e Lookup sau Person,
+  trebuie ajustată maparea.
 
 ### Limitări
 
 - **Excel pe web** nu face refresh la surse SharePoint autentificate. Fișierul trebuie deschis în
-  Excel desktop, altfel tabelul rămâne gol.
-- Exportul nu mai consumă deloc cota de Office Scripts. **Importul** o consumă în continuare
-  (`ValidateAndMatchImport`, ~12 apeluri la 60.000 de rânduri cu `pageSize` 5000).
+  Excel desktop.
+- Exportul nu consumă cota de Office Scripts. **Importul** o consumă în continuare.
