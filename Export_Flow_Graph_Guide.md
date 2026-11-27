@@ -1,6 +1,6 @@
 # Export inventar pe țară prin Microsoft Graph: ghid pas cu pas
 
-Template: `SIM_Inventory_Export_GRAPH_TEMPLATE.xlsx` (în acest folder). E template-ul de import, fără
+Template: `SIM_Inventory_Export_PLAIN_TEMPLATE.xlsx` (în acest folder). E template-ul de import, fără
 rândurile de exemplu, **fără Power Query și fără adresa listei în fișier**.
 
 ## Diferența față de varianta Power Query
@@ -47,7 +47,7 @@ rândurile, și merge și în browser.
 2. **Folderul `ExportFiles`.** Creează-l în **Documents** pe site-ul `simri`. Apoi: Manage access →
    Advanced → **Stop inheriting permissions** și scoate pe toată lumea, în afară de proprietarul
    flow-ului și administratori. Fiecare utilizator primește acces doar la fișierul lui (pasul 13).
-3. **Template-ul.** Încarcă `SIM_Inventory_Export_GRAPH_TEMPLATE.xlsx` în
+3. **Template-ul.** Încarcă `SIM_Inventory_Export_PLAIN_TEMPLATE.xlsx` în
    `Documents/ExportTemplate`.
 4. **Conexiunea HTTP with Microsoft Entra ID.** La prima acțiune îți cere:
    - Base Resource URL: `https://graph.microsoft.com`
@@ -82,7 +82,7 @@ concat('SIM_Inventory_', replace(trim(triggerBody()?['text']), ' ', '_'), '_', f
 
 ## Pasul 4: SharePoint `Get file content` → `Get template`
 
-`/Shared Documents/ExportTemplate/SIM_Inventory_Export_GRAPH_TEMPLATE.xlsx`
+`/Shared Documents/ExportTemplate/SIM_Inventory_Export_PLAIN_TEMPLATE.xlsx`
 
 ## Pasul 5: SharePoint `Create file` → `Create export file`
 
@@ -184,6 +184,20 @@ ID-ul sesiunii este `body('Create_session')?['id']`.
 | Body | `{ "index": null, "values": @{items('Write_chunks')} }` |
 
 **Settings → Retry policy: None.** Un retry după un timeout ar putea scrie același lot de două ori.
+
+## Pasul 10b: HTTP Graph → `Remove placeholder row`
+
+Template-ul are un rând gol pe rândul 2, care păstrează formulele. Fără el, un tabel complet gol
+pierde regulile de culoare de pe primul rând. `rows/add` adaugă rândurile după el, așa că rândul
+gol se șterge la sfârșit. Pune acțiunea **după** `Write chunks`, într-un `Condition`
+`outputs('Total_rows')` > 0 (Compose `Total rows` = `length(body('Shape_rows'))`):
+
+| Câmp | Valoare |
+|---|---|
+| Method | `POST` |
+| Url | `@{outputs('Workbook_url')}/worksheets/query/range(address='A2:AB2')/delete` |
+| Headers | `workbook-session-id` : `@{body('Create_session')?['id']}` |
+| Body | `{ "shift": "Up" }` |
 
 ## Pasul 11: HTTP Graph → `Close session`
 
